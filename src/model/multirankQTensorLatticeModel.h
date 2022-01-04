@@ -2,6 +2,7 @@
 #define multirankQTensorLatticeModel_H
 
 #include "qTensorLatticeModel.h"
+#include <functional>
 #include <mpi.h>
 /*! \file multirankQTensorLatticeModel.h */
 
@@ -24,10 +25,30 @@ class multirankQTensorLatticeModel : public qTensorLatticeModel
         bool zHalo;
 
         int myRank;
-        int3 latticeSites;
+
+        //When a simulation sets the configuration, the position of the local origin relative to the global coordinate system is shared with the model
+        int3 latticeMinPosition;
 
         //! list of start/stop elements in the transfer arrays for the halo sites
         vector<int2> transferStartStopIndexes;
+
+
+        //! randomly set Q tensors to correspond to a field of directors of some S0. If globallyAligned = false, each lattice site is set separately, if globallyAligned = true all will point in the same (random) direction.
+        void setRandomDirectors(noiseSource &noise, scalar s0, bool globallyAligned = false);
+        //!Set every lattice site to a Q tensor corresponding to the same target director and s0 value
+        void setUniformDirectors(scalar3 targetDirector, scalar s0);
+
+        //!pass a function which sets the director (first three components) and the local s0 value (fourth component) as a function of x, y, z....
+        /*!
+        The format should be something like
+        scalar4 func(scalar x, scalar y, scalar z) {
+                    scalar4 ans;
+                    ans.x = nx; ans.y=ny; ans.z=nz; ans.w = s0;
+                    return ans;};
+        setDirectorFromFunction(&func);
+        */
+        void setDirectorFromFunction(std::function<scalar4(scalar,scalar,scalar)> func);
+        
 
         GPUArray<int> intTransferBufferSend;
         GPUArray<scalar> doubleTransferBufferSend;
@@ -46,8 +67,8 @@ class multirankQTensorLatticeModel : public qTensorLatticeModel
         //! given an  0 <= index < totalSites, return the local lattice position
         int3 indexToPosition(int idx);
         //!given a local lattice position, return the index in the expanded data arrays
-        int positionToIndex(int3 &pos);
-        int positionToIndex(int px, int py, int pz)
+        virtual int positionToIndex(int3 &pos);
+        virtual int positionToIndex(int px, int py, int pz)
             {
             int3 temp; temp.x = px; temp.y = py; temp.z=pz;
             return positionToIndex(temp);

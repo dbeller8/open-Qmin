@@ -36,11 +36,11 @@ public:
 
 private slots:
     //parameter setting
-    void on_setPhaseConstantsButton_released();
-    void on_setOneConstant_released();
     void on_initializeButton_released();
-    void on_setTwoConstants_released();
-    void on_setThreeConstants_released();
+    void on_setPhaseConstantsButton_released();
+    void on_setDistortionConstantsButton_released();
+    void on_setFiveConstants_released();
+    
     //simulation controls
     void on_minimizeButton_released();
     void on_resetQTensorsButton_released();
@@ -70,6 +70,8 @@ private slots:
     void on_importFileNowButton_released();
 
     void on_saveFileNowButton_released();
+
+    void on_loadFileNowButton_released();
 
     void on_boxLSize_textEdited(const QString &arg1);
 
@@ -103,7 +105,6 @@ private slots:
 
     void on_phaseBBox_textEdited(const QString &arg1);
 
-    void on_setFiveConstants_released();
 
     void startCustomFile();
     void saveCustomFile();
@@ -121,6 +122,10 @@ private slots:
     void on_xNormalCheckBox_released();
 
     void on_drawPlanesCheckBox_released();
+
+    void on_K1checkBox_released();
+    void on_K12checkBox_released();
+    void on_K123checkBox_released();
 
 private:
     Ui::MainWindow *ui;

@@ -86,12 +86,93 @@ void landauDeGennesLC::setModel(shared_ptr<cubicLattice> _model)
     */
     };
 
+/*!
+a function that loads the strength of a spatially varying field from specified files. THIS FUNCTION ASSUMES
+that the files to be loaded are formatted so that each line looks like
+x y z Hz Hy Hz
+The expected format for every line is, thus:
+%i %i %i %f %f %f
+Additionally, so that the function works correctly on multi-rank simulations, the file names MUST HAVE
+the _x%i_y%i_z%i.txt ending expected to specifiy what rank the file corresponds to.
+(so, even if you are doing non-MPI simulations, your file must be named yourFileName_x0y0z0.txt and you would call the function with something like
+string loadingFileName = "yourFileName";
+sim->loadSpatiallyVaryingField(loadingFileName);
+*/
+void landauDeGennesLC::setSpatiallyVaryingField(string fname, scalar chi, scalar _mu0,scalar _deltaChi, int3 rankParity)
+    {
+    Chi =chi;
+    mu0=_mu0;
+    deltaChi=_deltaChi;
+    spatiallyVaryingFieldContribution = true;
+    int N = lattice->getNumberOfParticles();
+
+    //initialize field to all zero values
+    double3 zero = make_double3(0,0,0);
+    vector<double3> zeroVector(N,zero);
+    fillGPUArrayWithVector(zeroVector, spatiallyVaryingField);
+    char fn[256];
+    sprintf(fn,"%s_x%iy%iz%i.txt",fname.c_str(),rankParity.x,rankParity.y,rankParity.z);
+
+    printf("loading spatially varying field from file name %s...\n",fn);
+    int xOffset = rankParity.x*lattice->latticeSites.x;
+    int yOffset = rankParity.y*lattice->latticeSites.y;
+    int zOffset = rankParity.z*lattice->latticeSites.z;
+    ArrayHandle<scalar3> hh(spatiallyVaryingField);
+    ifstream myfile;
+    myfile.open(fn);
+    if(myfile.fail())
+        {
+        printf("\nERROR trying to load file named %s\n",fn);
+        printf("\nYou have tried to load a file that either does not exist or that you do not have permission to access! \n Error in file %s at line %d\n",__FILE__,__LINE__);
+        throw std::exception();
+        }
+    int px,py,pz;
+    double Hx,Hy,Hz;
+    while(myfile >> px >> py >>pz >> Hx >> Hy >> Hz)
+        {
+        int3 pos;
+        pos.x = px - xOffset;
+        pos.y = py - yOffset;
+        pos.z = pz - zOffset;
+        int idx = lattice->positionToIndex(pos);
+        hh.data[idx].x = Hx;
+        hh.data[idx].y = Hy;
+        hh.data[idx].z = Hz;
+        }
+    myfile.close();
+    }
+
 void landauDeGennesLC::computeForces(GPUArray<dVec> &forces,bool zeroOutForce, int type)
     {
     if(useGPU)
         computeForceGPU(forces,zeroOutForce);
     else
         computeForceCPU(forces,zeroOutForce,type);
+
+    correctForceFromMetric(forces);
+    }
+
+void landauDeGennesLC::correctForceFromMetric(GPUArray<dVec> &forces)
+    {
+    int N = lattice->getNumberOfParticles();
+    if(useGPU)
+        {
+        ArrayHandle<dVec> d_force(forces,access_location::device,access_mode::readwrite);
+        gpuCorrectForceFromMetric(d_force.data,N,forceTuner->getParameter());
+        }
+    else
+        {
+        ArrayHandle<dVec> h_force(forces,access_location::host,access_mode::readwrite);
+        scalar QxxOld, QyyOld;
+        scalar twoThirds = 2./3.;
+        for (int i = 0; i < N ; ++i)
+            {
+            QxxOld = h_force.data[i][0];
+            QyyOld = h_force.data[i][3];
+            h_force.data[i][0] = twoThirds*(2.*QxxOld - QyyOld);
+            h_force.data[i][3] = twoThirds*(2.*QyyOld - QxxOld);
+            };
+        }
     }
 
 void landauDeGennesLC::computeForceGPU(GPUArray<dVec> &forces,bool zeroOutForce)
@@ -133,6 +214,8 @@ void landauDeGennesLC::computeForceGPU(GPUArray<dVec> &forces,bool zeroOutForce)
         computeEorHFieldForcesGPU(forces,false,Efield,deltaEpsilon,epsilon0);
     if(computeHfieldContribution)
         computeEorHFieldForcesGPU(forces,false,Hfield,deltaChi,mu0);
+    if(spatiallyVaryingFieldContribution)
+        computeSpatiallyVaryingFieldGPU(forces,false,spatiallyVaryingField, deltaChi,mu0);
     };
 
 void landauDeGennesLC::computeForceCPU(GPUArray<dVec> &forces,bool zeroOutForce, int type)
@@ -172,6 +255,8 @@ void landauDeGennesLC::computeForceCPU(GPUArray<dVec> &forces,bool zeroOutForce,
             {
             computeEorHFieldForcesCPU(forces,false,Hfield,deltaChi,mu0);
             };
+        if(spatiallyVaryingFieldContribution)
+            computeSpatiallyVaryingFieldCPU(forces,false,spatiallyVaryingField, deltaChi,mu0);
         };
     };
 
@@ -220,6 +305,7 @@ void landauDeGennesLC::computeEnergyCPU(bool verbose)
     ArrayHandle<int> latticeTypes(lattice->returnTypes());
     ArrayHandle<boundaryObject> bounds(lattice->boundaries);
     ArrayHandle<scalar> energyPerSite(energyDensity);
+    ArrayHandle<scalar3> externalField(spatiallyVaryingField);
     scalar a = 0.5*A;
     scalar b = B/3.0;
     scalar c = 0.25*C;
@@ -259,7 +345,16 @@ void landauDeGennesLC::computeEnergyCPU(bool verbose)
                     hFieldEnergy+=hFieldAtSite;
                     energyPerSite.data[i] +=hFieldAtSite;
                 }
-
+            if(spatiallyVaryingFieldContribution)
+                {
+                    scalar3 field = externalField.data[currentIndex];
+                    scalar hFieldAtSite=mu0*(-0.5*field.x*field.x*(Chi + deltaChi*qCurrent[0]) -
+                              deltaChi*field.x*field.y*qCurrent[1] - deltaChi*field.x*field.z*qCurrent[2] -
+                              0.5*field.z*field.z*(Chi - deltaChi*qCurrent[0] - deltaChi*qCurrent[3]) -
+                              0.5*field.y*field.y*(Chi + deltaChi*qCurrent[3]) - deltaChi*field.y*field.z*qCurrent[4]);
+                    hFieldEnergy+=hFieldAtSite;
+                    energyPerSite.data[i] +=hFieldAtSite;
+                }
             xDown = Qtensors.data[neighbors[0]];
             xUp = Qtensors.data[neighbors[1]];
             yDown = Qtensors.data[neighbors[2]];

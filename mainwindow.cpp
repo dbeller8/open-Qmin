@@ -18,14 +18,13 @@ MainWindow::MainWindow(QWidget *parent) :
 {
     ui->setupUi(this);
     ui->setPhaseConstants->hide();
-    ui->setDistortionConstants1->hide();
-    ui->setDistortionConstants2->hide();
-    ui->setDistortionConstants3->hide();
+    ui->setDistortionConstants->hide();
     ui->setDistortionConstants5->hide();
     ui->fireParametersWidget->hide();
     ui->addObjectsWidget->hide();
     ui->fileImportWidget->hide();
     ui->fileSaveWidget->hide();
+    ui->fileLoadWidget->hide();
     ui->nesterovWidget->hide();
     ui->applyFieldWidget->hide();
     ui->moveObjectWidget->hide();
@@ -177,11 +176,21 @@ void MainWindow::on_initializeButton_released()
     C=ui->initialPhaseC->text().toDouble();
 
     sim->setCPUOperation(!GPU);
-    sprintf(lineBit,"\tsim->setCPUOperation(!GPU);");
-    customFile.addLine(lineBit);
 
     ui->progressBar->setValue(50);
     S0 = (-B+sqrt(B*B-24*A*C))/(6*C);
+    double sampleL1=2.32;
+    double constK = 9.0*S0*S0*sampleL1*0.5;
+    QString oneConstantKs = QString::number(constK, 'f', 3);
+    ui->K1Box1->setText(oneConstantKs);
+    ui->K1K2Box1->setText(oneConstantKs);
+    ui->K1K2Box2->setText(oneConstantKs);
+    ui->K1K2K3Box1->setText(oneConstantKs);
+    ui->K1K2K3Box2->setText(oneConstantKs);
+    ui->K1K2K3Box3->setText(oneConstantKs);
+    ui->K24Box->setText(oneConstantKs);
+
+
     Configuration->setNematicQTensorRandomly(noise,S0);
     sprintf(lineBit,"\tConfiguration->setNematicQTensorRandomly(noise,%f);",S0);
     customFile.addLine(lineBit);
@@ -194,23 +203,23 @@ void MainWindow::on_initializeButton_released()
     switch(nC)
     {
         case 1:
-            ui->setDistortionConstants1->show();
+            ui->K1checkBox->setChecked(true);
+            ui->K12checkBox->setChecked(false);
+            ui->K123checkBox->setChecked(false);
+            ui->K24checkBox->setChecked(true);
             break;
         case 2:
-            ui->setDistortionConstants2->show();
+            ui->K1checkBox->setChecked(false);
+            ui->K12checkBox->setChecked(true);
+            ui->K123checkBox->setChecked(false);
             break;
         case 3:
-            ui->setDistortionConstants3->show();
-            break;
-        case 4:
-            ui->setDistortionConstants1->show();
-            printable = QStringLiteral("No four-constant distortion term defined... use the Change forces menu to select what you want ");
-            ui->testingBox->setText(printable);
-            break;
-        case 5:
-            ui->setDistortionConstants5->show();
+            ui->K1checkBox->setChecked(false);
+            ui->K12checkBox->setChecked(false);
+            ui->K123checkBox->setChecked(true);
             break;
     }
+    ui->setDistortionConstants->show();
 
     printable = QStringLiteral("N %8 Lx %1 Ly %2 Lz %3 gpu %4... A %5 B %6 C %7 ")
                         .arg(BoxX).arg(BoxY).arg(BoxZ).arg(compDevice).arg(A).arg(B).arg(C).arg(Configuration->getNumberOfParticles());
@@ -229,6 +238,7 @@ void MainWindow::simulationInitialize()
      landauLCForce = make_shared<landauDeGennesLC>();
 
      sim->setConfiguration(Configuration);
+     customFile.addLine("\tsim->setConfiguration(Configuration);");
 
      landauLCForce->setPhaseConstants(A,B,C);
      landauLCForce->setModel(Configuration);
@@ -281,64 +291,74 @@ void MainWindow::on_setPhaseConstantsButton_released()
     showControls();
 }
 
-void MainWindow::on_setOneConstant_released()
+void MainWindow::on_setDistortionConstantsButton_released()
 {
-    L1 =ui->oneConstantL1Box->text().toDouble();
-    ui->setDistortionConstants1->hide();
-    landauLCForce->setElasticConstants(L1,0,0,0,0);
-    landauLCForce->setNumberOfConstants(distortionEnergyType::oneConstant);
-    QString printable = QStringLiteral("One-elastic-constant approximation set: L1 %1").arg((L1));
-    ui->testingBox->setText(printable);
-    landauLCForce->setModel(Configuration);
-    showControls();
+    ui->setDistortionConstants->hide();
 
-    sprintf(lineBit,"\tlandauLCForce->setElasticConstants(%f,0,0,0,0);",L1);
-    customFile.addLine(lineBit);
-    customFile.addLine("\tlandauLCForce->setNumberOfConstants(distortionEnergyType::oneConstant);");
-    customFile.addLine("\tlandauLCForce->setModel(Configuration);");
+    L1=0;L2=0;L3=0;L4=0;L6=0;
+    double k1, k2,k3,k24,q0;
+    k1=k2=k3=k24=q0=0.;
+    if(ui->K1checkBox->isChecked())
+        {
+        k1 = ui->K1Box1->text().toDouble();
+        k2 = ui->K1Box1->text().toDouble();
+        k3 = ui->K1Box1->text().toDouble();
+        }
+    if(ui->K12checkBox->isChecked())
+        {
+        k1 = ui->K1K2Box1->text().toDouble();
+        k2 = ui->K1K2Box2->text().toDouble();
+        k3 = ui->K1K2Box1->text().toDouble();
+        }
+    if(ui->K123checkBox->isChecked())
+        {
+        k1 = ui->K1K2K3Box1->text().toDouble();
+        k2 = ui->K1K2K3Box2->text().toDouble();
+        k3 = ui->K1K2K3Box3->text().toDouble();
+        }
+    if(ui->q0checkBox->isChecked())
+        q0 = ui->q0Box->text().toDouble();
+    if(ui->K24checkBox->isChecked())
+        k24 = ui->K24Box->text().toDouble();
+
+    L1=2.0*(k3-k1+3.*k2)/(27.*S0*S0);
+
+    L2=4.0*(k1-k24)/(9.*S0*S0);
+
+    L3=4.0*(k24-k2)/(9.*S0*S0);
+
+    L4=-8.0*q0*k2/(9.*S0*S0);
+
+    L6=4.0*(k3-k1)/(27.*S0*S0*S0);
+    printf("setting elastic constants to L1 = %.5f, L2 = %.5f, L3 = %.5f, L4 = %f, L6 = %.5f\n",L1,L2,L3,L4,L6);
+    if(L2 == 0 && L3 == 0 && L4 ==0 && L6 ==0)
+        {
+        cout << "using a one-constant approximation" << endl;
+        landauLCForce->setElasticConstants(L1,0,0,0,0);
+        landauLCForce->setNumberOfConstants(distortionEnergyType::oneConstant);
+        landauLCForce->setModel(Configuration);
+        sprintf(lineBit,"\tlandauLCForce->setElasticConstants(%f,0,0,0,0);",L1);
+        customFile.addLine(lineBit);
+        customFile.addLine("\tlandauLCForce->setNumberOfConstants(distortionEnergyType::oneConstant);");
+        customFile.addLine("\tlandauLCForce->setModel(Configuration);");
+        }
+    else
+        {
+        cout << "using a multi-constant approximation" << endl;
+        landauLCForce->setElasticConstants(L1,L2,L3,L4,L6);
+        landauLCForce->setNumberOfConstants(distortionEnergyType::multiConstant);
+        landauLCForce->setModel(Configuration);
+        sprintf(lineBit,"\tlandauLCForce->setElasticConstants(%f,%f,%f,%f,%f);",L1,L2,L3,L4,L6);
+        customFile.addLine(lineBit);
+        customFile.addLine("\tlandauLCForce->setNumberOfConstants(distortionEnergyType::multiConstant);");
+        customFile.addLine("\tlandauLCForce->setModel(Configuration);");
+        }
+    QString printable = QStringLiteral("Landau-deGennes constants used: L1 %1 L2 %2 L3 %3 L4 %4 L6 %5").arg(L1).arg(L2).arg(L3).arg(L4).arg(L6);
+    ui->testingBox->setText(printable);
+
+    showControls();
 }
 
-void MainWindow::on_setTwoConstants_released()
-{
-    L1=ui->twoConstantL1Box->text().toDouble();
-    L2=ui->twoConstantL2Box->text().toDouble();
-    L3=0;
-    L4=ui->twoConstantQ0Box->text().toDouble();
-    L6=0;
-    ui->setDistortionConstants2->hide();
-    landauLCForce->setElasticConstants(L1,L2,L3,L4,L6);
-    landauLCForce->setNumberOfConstants(distortionEnergyType::multiConstant);
-    QString printable = QStringLiteral("Two-elastic-constant approximation set: Lx %1 Ly %2 q0 %3 ").arg(L1).arg(L2).arg(L4);
-    ui->testingBox->setText(printable);
-    landauLCForce->setModel(Configuration);
-    showControls();
-
-    sprintf(lineBit,"\tlandauLCForce->setElasticConstants(%f,%f,%f,%f,%f);",L1,L2,L3,L4,L6);
-    customFile.addLine(lineBit);
-    customFile.addLine("\tlandauLCForce->setNumberOfConstants(distortionEnergyType::multiConstant);");
-    customFile.addLine("\tlandauLCForce->setModel(Configuration);");
-}
-
-void MainWindow::on_setThreeConstants_released()
-{
-    L1=ui->threeConstantL1Box->text().toDouble();
-    L2=ui->threeConstantL2Box->text().toDouble();
-    L3=0;
-    L4=0;
-    L6=ui->threeConstantL3Box->text().toDouble();
-    ui->setDistortionConstants3->hide();
-    landauLCForce->setElasticConstants(L1,L2,L3,L4,L6);
-    landauLCForce->setNumberOfConstants(distortionEnergyType::multiConstant);
-    QString printable = QStringLiteral("three-elastic-constant approximation set: L1 %1 L2 %2 L3 %3 ").arg(L1).arg(L2).arg(L6);
-    ui->testingBox->setText(printable);
-    landauLCForce->setModel(Configuration);
-    showControls();
-
-    sprintf(lineBit,"\tlandauLCForce->setElasticConstants(%f,%f,%f,%f,%f);",L1,L2,L3,L4,L6);
-    customFile.addLine(lineBit);
-    customFile.addLine("\tlandauLCForce->setNumberOfConstants(distortionEnergyType::multiConstant);");
-    customFile.addLine("\tlandauLCForce->setModel(Configuration);");
-}
 
 void MainWindow::on_setFiveConstants_released()
 {
@@ -349,15 +369,28 @@ void MainWindow::on_setFiveConstants_released()
     L6=ui->fiveConstantL6Box->text().toDouble();
     ui->setDistortionConstants5->hide();
     landauLCForce->setElasticConstants(L1,L2,L3,L4,L6);
+    printf("setting elastic constants to L1 = %.5f, L2 = %.5f, L3 = %.5f, L4 = %f, L6 = %.5f\n",L1,L2,L3,L4,L6);
+    sprintf(lineBit,"\tlandauLCForce->setElasticConstants(%f,%f,%f,%f,%f);",L1,L2,L3,L4,L6);
+    customFile.addLine(lineBit);
+    if(L2==0 && L3==0 && L4==0 && L6 ==0)
+        {
+        cout << "using a one-constant approximation" << endl;
+        landauLCForce->setNumberOfConstants(distortionEnergyType::oneConstant);
+        customFile.addLine("\tlandauLCForce->setNumberOfConstants(distortionEnergyType::oneConstant);");
+        }
+    else
+        {
+        cout << "using a multi-constant approximation" << endl;
+        landauLCForce->setNumberOfConstants(distortionEnergyType::multiConstant);
+        customFile.addLine("\tlandauLCForce->setNumberOfConstants(distortionEnergyType::multiConstant);");
+        }
+
     landauLCForce->setNumberOfConstants(distortionEnergyType::multiConstant);
     QString printable = QStringLiteral("five-elastic-constant approximation set: L1 %1 L2 %2 L3 %3 L4 %4 L6 %5").arg(L1).arg(L2).arg(L3).arg(L4).arg(L6);
     ui->testingBox->setText(printable);
     landauLCForce->setModel(Configuration);
     showControls();
 
-    sprintf(lineBit,"\tlandauLCForce->setElasticConstants(%f,%f,%f,%f,%f);",L1,L2,L3,L4,L6);
-    customFile.addLine(lineBit);
-    customFile.addLine("\tlandauLCForce->setNumberOfConstants(distortionEnergyType::multiConstant);");
     customFile.addLine("\tlandauLCForce->setModel(Configuration);");
 }
 
@@ -370,9 +403,6 @@ void MainWindow::on_fireParamButton_released()
 
     customFile.addLine("\tsim->clearUpdaters();");
     customFile.addLine("\tfire = make_shared<energyMinimizerFIRE>(Configuration);");
-    customFile.addLine("\tsim->addUpdater(fire,Configuration);");
-    customFile.addLine("\tsim->setCPUOperation(!sim->useGPU);");
-
 
     ui->fireParametersWidget->hide();
     ui->progressBar->setValue(0);
@@ -401,6 +431,7 @@ void MainWindow::on_fireParamButton_released()
     customFile.addLine(lineBit);
     sprintf(lineBit,"\tfire->setMaximumIterations(%i);",maximumIterations);
     customFile.addLine(lineBit);
+    customFile.addLine("\tsim->addUpdater(fire,Configuration);");
 }
 
 void MainWindow::on_minimizeButton_released()
@@ -409,6 +440,8 @@ void MainWindow::on_minimizeButton_released()
     sprintf(lineBit,"\tupd->setCurrentIterations(0);");
     customFile.addLine(lineBit);
     sprintf(lineBit,"\tupd->setMaximumIterations(%i);}",maximumIterations);
+    customFile.addLine(lineBit);
+    sprintf(lineBit,"\tsim->setCPUOperation(!sim->useGPU);");
     customFile.addLine(lineBit);
     customFile.addLine("\tsim->performTimestep();");
 
@@ -460,6 +493,7 @@ void MainWindow::on_resetQTensorsButton_released()
     ui->progressBar->setValue(40);
     scalar S0 = (-B+sqrt(B*B-24*A*C))/(6*C);
     ui->progressBar->setValue(60);
+    fire->setCurrentIterations(0);
     if(noise.Reproducible)
         noise.setReproducibleSeed(13377);
     bool globalAlignment = ui->globalAlignmentCheckBox->isChecked();
@@ -1008,27 +1042,22 @@ void MainWindow::on_saveFileNowButton_released()
     sim->saveState(fileName);
     sprintf(lineBit,"\tsim->saveState(\"%s\",saveStride);",fileName.c_str());
     customFile.addLine(lineBit);
-/*
-    ArrayHandle<dVec> pp(Configuration->returnPositions());
-    ArrayHandle<int> tt(Configuration->returnTypes());
-    ofstream myfile;
-    myfile.open (fileName.c_str());
-    for (int ii = 0; ii < Configuration->getNumberOfParticles();++ii)
-        {
-        int3 pos = Configuration->latticeIndex.inverseIndex(ii);
-        myfile << pos.x <<"\t"<<pos.y<<"\t"<<pos.z;
-        for (int dd = 0; dd <DIMENSION; ++dd)
-            myfile <<"\t"<<pp.data[ii][dd];
-        myfile << "\t"<<tt.data[ii]<<"\n";
-        };
-
-
-
-    myfile.close();
-    */
     QString printable1 = QStringLiteral("File saved");
     ui->testingBox->setText(printable1);
     ui->fileSaveWidget->hide();
+}
+
+void MainWindow::on_loadFileNowButton_released()
+{
+    QString fname = ui->loadFileNameBox->text();
+    string fileName = fname.toStdString();
+    sim->loadState(fileName);
+    sprintf(lineBit,"\tsim->loadState(\"%s\");",fileName.c_str());
+    customFile.addLine(lineBit);
+    QString printable1 = QStringLiteral("File loaded");
+    ui->testingBox->setText(printable1);
+    ui->fileLoadWidget->hide();
+    on_drawStuffButton_released();
 }
 
 void MainWindow::on_boxLSize_textEdited(const QString &arg1)
@@ -1048,8 +1077,6 @@ void MainWindow::on_nesterovParamButton_released()
 
     customFile.addLine("\tsim->clearUpdaters();");
     customFile.addLine("\tnesterov = make_shared<energyMinimizerNesterovAG>(Configuration);");
-    customFile.addLine("\tsim->addUpdater(nesterov,Configuration);");
-    customFile.addLine("\tsim->setCPUOperation(!sim->useGPU);");
 
     ui->progressBar->setValue(0);
     scalar dt = ui->nesterovDtBox->text().toDouble();
@@ -1073,6 +1100,7 @@ void MainWindow::on_nesterovParamButton_released()
     customFile.addLine(lineBit);
     sprintf(lineBit,"\tnesterov->setMaximumIterations(%i);",maximumIterations);
     customFile.addLine(lineBit);
+    customFile.addLine("\tsim->addUpdater(nesterov,Configuration);");
 
     QString printable = QStringLiteral("nesterov minimization parameters set, force cutoff of %1 dt of %2 and momentum %3 chosen for %4 steps %5").arg(forceCutoff).arg(dt).arg(mu)
                                     .arg(maximumIterations).arg(nesterov->getMaxIterations());
@@ -1360,3 +1388,30 @@ void MainWindow::on_drawPlanesCheckBox_released()
 {
     on_drawStuffButton_released();
 }
+
+void MainWindow::on_K1checkBox_released()
+{
+    if(ui->K1checkBox->isChecked())
+        {
+        ui->K12checkBox->setChecked(false);
+        ui->K123checkBox->setChecked(false);
+        }
+}
+void MainWindow::on_K12checkBox_released()
+{
+    if(ui->K12checkBox->isChecked())
+        {
+        ui->K1checkBox->setChecked(false);
+        ui->K123checkBox->setChecked(false);
+        }
+}
+void MainWindow::on_K123checkBox_released()
+{
+    if(ui->K123checkBox->isChecked())
+        {
+        ui->K12checkBox->setChecked(false);
+        ui->K1checkBox->setChecked(false);
+        }
+}
+
+

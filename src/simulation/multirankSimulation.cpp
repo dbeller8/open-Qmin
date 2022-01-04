@@ -443,6 +443,7 @@ void multirankSimulation::setConfiguration(MConfigPtr _config)
     latticeMinPosition.x = rankParity.x*Conf->latticeSites.x;
     latticeMinPosition.y = rankParity.y*Conf->latticeSites.y;
     latticeMinPosition.z = rankParity.z*Conf->latticeSites.z;
+    Conf->latticeMinPosition = latticeMinPosition;
     };
 
 /*!
@@ -558,6 +559,59 @@ void multirankSimulation::performTimestep()
     };
 
 /*!
+a function that loads the state from a specified files. THIS FUNCTION ASSUMES that the file is formatted
+exactly in the way the saveState function formats a saved state. That is, each line should be formatted as
+x y z Qxx Qxy Qxz Qyy Qyz type defect strength
+The expected format is, hence,
+%i %i %i %f %f %f %f %f %i %f
+Additionally, so that this can work correctly on a multi-rank simulation, the file names must have the _x%iy%iz%i ending expected to specify what rank it corresponds to
+(so, even if you are doing non-MPI simulations, your file must be named yourFileName_x0y0z0.txt and you would call the loadState function with something like
+sim->loadState(yourFileName);
+
+Note that the load state function DOES NOT load any information about boundary objects, so be sure to include any such information in the cpp file itself.
+*/
+void multirankSimulation::loadState(string fname)
+    {
+    auto Conf = mConfiguration.lock();
+    char fn[256];
+    sprintf(fn,"%s_x%iy%iz%i.txt",fname.c_str(),rankParity.x,rankParity.y,rankParity.z);
+
+    printf("loading state...\n");
+
+    int xOffset = rankParity.x*Conf->latticeSites.x;
+    int yOffset = rankParity.y*Conf->latticeSites.y;
+    int zOffset = rankParity.z*Conf->latticeSites.z;
+
+    ArrayHandle<dVec> pp(Conf->returnPositions());
+    ArrayHandle<int> tt(Conf->returnTypes());
+    ifstream myfile;
+    myfile.open(fn);
+    if(myfile.fail())
+        {
+        printf("\nERROR trying to load file named %s\n",fn);
+        printf("\nYou have tried to load a file that either does not exist or that you do not have permission to access! \n Error in file %s at line %d\n",__FILE__,__LINE__);
+        throw std::exception();
+        }
+    int px,py,pz, type;
+    double qxx,qxy,qxz,qyy,qyz, defectStrength;
+    while(myfile >> px >> py >>pz >> qxx >> qxy >>qxz >> qyy >> qyz >> type >> defectStrength)
+        {
+        int3 pos;
+        pos.x = px - xOffset;
+        pos.y = py - yOffset;
+        pos.z = pz - zOffset;
+        int idx = Conf->positionToIndex(pos);
+        pp.data[idx][0] = qxx;
+        pp.data[idx][1] = qxy;
+        pp.data[idx][2] = qxz;
+        pp.data[idx][3] = qyy;
+        pp.data[idx][4] = qyz;
+    //    tt.data[idx] = type;
+        }
+    myfile.close();
+    };
+
+/*!
 Saves a file for each rank recording the current state of the system (each rank will produce an independent file,
 named StringJoin[fname,"_x(ToString[X])_y(ToString[Y])_z(ToString[Z]).txt"], where X, Y, and Z
 denote the position in the partitioning that the rank controls.
@@ -581,13 +635,13 @@ void multirankSimulation::saveState(string fname, int latticeSkip, int defectTyp
     char fn[256];
     sprintf(fn,"%s_x%iy%iz%i.txt",fname.c_str(),rankParity.x,rankParity.y,rankParity.z);
 
-    printf("saving state...\n");
+//    printf("saving state...\n");
 
-    int xOffset = rankParity.x*Conf->latticeSites.x;
-    int yOffset = rankParity.y*Conf->latticeSites.y;
-    int zOffset = rankParity.z*Conf->latticeSites.z;
+    int xOffset = latticeMinPosition.x;
+    int yOffset = latticeMinPosition.y;
+    int zOffset = latticeMinPosition.z;
 
-    Conf->getAverageEigenvalues();
+    Conf->getAverageEigenvalues(false);
     Conf->computeDefectMeasures(defectType);
     ArrayHandle<dVec> pp(Conf->returnPositions());
     ArrayHandle<int> tt(Conf->returnTypes());

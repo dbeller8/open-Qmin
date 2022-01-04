@@ -14,6 +14,7 @@
 #include "profiler.h"
 #include <tclap/CmdLine.h>
 #include <mpi.h>
+#include "logSpacedIntegers.h"
 
 #include "cuda_profiler_api.h"
 
@@ -53,11 +54,12 @@ int main(int argc, char*argv[])
 
     //define the various command line strings that can be passed in...
     //ValueArg<T> variableName("shortflag","longFlag","description",required or not, default value,"value type",CmdLine object to add to
-    ValueArg<int> programSwitchArg("z","programSwitch","an integer controlling program branch",false,0,"int",cmd);
+    ValueArg<int> initializationSwitchArg("z","initializationSwitch","an integer controlling program branch",false,0,"int",cmd);
     ValueArg<int> gpuSwitchArg("g","GPU","which gpu to use",false,-1,"int",cmd);
 
     SwitchArg reproducibleSwitch("r","reproducible","reproducible random number generation", cmd, true);
     SwitchArg verboseSwitch("v","verbose","output more things to screen ", cmd, false);
+
 
     ValueArg<scalar> aSwitchArg("a","phaseConstantA","value of phase constant A",false,0.172,"scalar",cmd);
     ValueArg<scalar> bSwitchArg("b","phaseConstantB","value of phase constant B",false,2.12,"scalar",cmd);
@@ -66,8 +68,9 @@ int main(int argc, char*argv[])
     ValueArg<scalar> dtSwitchArg("e","deltaT","step size for minimizer",false,0.0005,"scalar",cmd);
     ValueArg<scalar> forceToleranceSwitchArg("f","fTarget","target minimization threshold for norm of residual forces",false,0.000000000001,"scalar",cmd);
 
-    ValueArg<int> iterationsSwitchArg("i","iterations","number of minimization steps",false,100,"int",cmd);
+    ValueArg<int> iterationsSwitchArg("i","iterations","maximum number of minimization steps",false,100,"int",cmd);
     ValueArg<int> kSwitchArg("k","nConstants","approximation for distortion term",false,1,"int",cmd);
+    ValueArg<int> randomSeedSwitch("","randomSeed","seed for reproducible random number generation", false, -1, "int",cmd);
 
 
     ValueArg<scalar> l1SwitchArg("","L1","value of L1 term",false,4.64,"scalar",cmd);
@@ -81,8 +84,12 @@ int main(int argc, char*argv[])
     ValueArg<int> lySwitchArg("","Ly","number of lattice sites in y direction",false,50,"int",cmd);
     ValueArg<int> lzSwitchArg("","Lz","number of lattice sites in z direction",false,50,"int",cmd);
 
+    ValueArg<string> initialConfigurationFileSwitchArg("","initialConfigurationFile", "carefully prepared file of the initial state of all lattice sites" ,false, "NONE", "string",cmd);
+    ValueArg<string> fieldFileSwitchArg("","spatiallyVaryingFieldFile", "carefully prepared file containing information on a spatially varying external H field" ,false, "NONE", "string",cmd);
     ValueArg<string> boundaryFileSwitchArg("","boundaryFile", "carefully prepared file of boundary sites" ,false, "NONE", "string",cmd);
     ValueArg<string> saveFileSwitchArg("","saveFile", "the base name to save the post-minimization configuration" ,false, "NONE", "string",cmd);
+    ValueArg<int> linearSaveSwitchArg("","linearSpacedSaving","save a file every x minimization steps",false,-1,"int",cmd);
+    ValueArg<scalar> logSaveSwitchArg("","logSpacedSaving","save a file every x^j for integer j",false,-1,"scalar",cmd);
     ValueArg<int> saveStrideSwitchArg("","stride","stride of the saved lattice sites",false,1,"int",cmd);
 
     ValueArg<scalar> setHFieldXSwitchArg("","hFieldX", "x component of external H field",false,0,"scalar",cmd);
@@ -92,17 +99,32 @@ int main(int argc, char*argv[])
     ValueArg<scalar> setHFieldChiSwitchArg("","hFieldChi", "Chi for external magenetic field",false,1,"scalar",cmd);
     ValueArg<scalar> setHFieldDeltaChiSwitchArg("","hFieldDeltaChi", "mu0 for external magenetic field",false,0.5,"scalar",cmd);
 
+    ValueArg<scalar> setEFieldXSwitchArg("","eFieldX", "x component of external E field",false,0,"scalar",cmd);
+    ValueArg<scalar> setEFieldYSwitchArg("","eFieldY", "y component of external E field",false,0,"scalar",cmd);
+    ValueArg<scalar> setEFieldZSwitchArg("","eFieldZ", "z component of external E field",false,0,"scalar",cmd);
+    ValueArg<scalar> setEFieldEps0SwitchArg("","eFieldEpsilon0", "epsilon0 for external electric field",false,1,"scalar",cmd);
+    ValueArg<scalar> setEFieldEpsSwitchArg("","eFieldEpsilon", "Epsilon for external electric field",false,1,"scalar",cmd);
+    ValueArg<scalar> setEFieldDeltaEpsSwitchArg("","eFieldDeltaEpsilon", "DeltaEpsilon for external electric field",false,0.5,"scalar",cmd);
+
     //parse the arguments
     cmd.parse( argc, argv );
     //define variables that correspond to the command line parameters
+    string initialConfigurationFile = initialConfigurationFileSwitchArg.getValue();
+    string fieldFile = fieldFileSwitchArg.getValue();
     string boundaryFile = boundaryFileSwitchArg.getValue();
     string saveFile = saveFileSwitchArg.getValue();
     int saveStride = saveStrideSwitchArg.getValue();
+    int linearSave = linearSaveSwitchArg.getValue();
+    scalar logSave = logSaveSwitchArg.getValue();
 
+    int randomSeed = randomSeedSwitch.getValue();
     bool reproducible = reproducibleSwitch.getValue();
+    if(randomSeed != -1)
+        reproducible = true;
+
     bool verbose= verboseSwitch.getValue();
     int gpu = gpuSwitchArg.getValue();
-    int programSwitch = programSwitchArg.getValue();
+    int initializationSwitch = initializationSwitchArg.getValue();
     int nDev;
     cudaGetDeviceCount(&nDev);
     if(nDev == 0)
@@ -147,7 +169,11 @@ int main(int argc, char*argv[])
     scalar b = -phaseB/phaseA;
     scalar c = phaseC/phaseA;
     noiseSource noise(reproducible);
-    noise.setReproducibleSeed(13371+myRank);
+    if(randomSeed == -1)
+        noise.setReproducibleSeed(13371+myRank);
+    else
+        noise.setReproducibleSeed(randomSeed+myRank);
+
     if(verbose) printf("setting a rectilinear lattice of size (%i,%i,%i)\n",boxLx,boxLy,boxLz);
     profiler pInit("initialization");
     pInit.start();
@@ -178,24 +204,44 @@ int main(int argc, char*argv[])
         landauLCForce->setNumberOfConstants(distortionEnergyType::multiConstant);
         }
 
-    scalar3 field; //direction and magnitude
-    field.x = setHFieldXSwitchArg.getValue();
-    field.y = setHFieldYSwitchArg.getValue();
-    field.z = setHFieldZSwitchArg.getValue();
+    scalar3 fieldH,fieldE; //direction and magnitude
+    fieldH.x = setHFieldXSwitchArg.getValue();
+    fieldH.y = setHFieldYSwitchArg.getValue();
+    fieldH.z = setHFieldZSwitchArg.getValue();
     scalar mu0 = setHFieldMu0SwitchArg.getValue();
     scalar chi = setHFieldChiSwitchArg.getValue();
     scalar deltaChi = setHFieldDeltaChiSwitchArg.getValue();
-    bool applyField = false;
-    if(field.x != 0 || field.y != 0 || field.z != 0)
-        applyField = true;
-    if(applyField)
+    fieldE.x = setEFieldXSwitchArg.getValue();
+    fieldE.y = setEFieldYSwitchArg.getValue();
+    fieldE.z = setEFieldZSwitchArg.getValue();
+    scalar eps0 = setEFieldEps0SwitchArg.getValue();
+    scalar eps = setEFieldEpsSwitchArg.getValue();
+    scalar deltaEps = setEFieldDeltaEpsSwitchArg.getValue();
+    bool applyFieldH = false;
+    bool applyFieldE = false;
+    bool applyVaryingField = fieldFile == "NONE" ? false : true;
+    if(fieldH.x != 0 || fieldH.y != 0 || fieldH.z != 0)
+        applyFieldH = true;
+    if(fieldE.x != 0 || fieldE.y != 0 || fieldE.z != 0)
+        applyFieldE = true;
+    if(applyFieldH)
         {
-        landauLCForce->setHField(field,chi,mu0,deltaChi);
-        if(verbose) printf("applying H-field (%f, %f, %f) with (mu0, chi, deltaChi) = (%f, %f, %f)\n",field.x,field.y,field.z,mu0,chi,deltaChi);
+        landauLCForce->setHField(fieldH,chi,mu0,deltaChi);
+        if(verbose) printf("applying H-field (%f, %f, %f) with (mu0, chi, deltaChi) = (%f, %f, %f)\n",fieldH.x,fieldH.y,fieldH.z,mu0,chi,deltaChi);
+        }
+    if(applyFieldE)
+        {
+        landauLCForce->setEField(fieldE,eps,eps0,deltaEps);
+        if(verbose) printf("applying E-field (%f, %f, %f) with (eps0, eps, deltaEps) = (%f, %f, %f)\n",fieldE.x,fieldE.y,fieldE.z,eps0,eps,deltaEps);
         }
 
     landauLCForce->setModel(Configuration);
     sim->addForce(landauLCForce);
+    if(applyVaryingField)
+        {
+        landauLCForce->setSpatiallyVaryingField(fieldFile,chi, mu0,deltaChi,sim->rankParity);
+        }
+
 
     shared_ptr<energyMinimizerFIRE> Fminimizer =  make_shared<energyMinimizerFIRE>(Configuration);
     Fminimizer->setMaximumIterations(maximumIterations);
@@ -205,9 +251,12 @@ int main(int argc, char*argv[])
     sim->addUpdater(Fminimizer,Configuration);
 
     sim->setCPUOperation(true);//have cpu and gpu initialized the same...for debugging
+    /*
+    The following header file includes various common ways you might want to set the inital state of the lattice of Qtensors. 
+    It is controlled by the "initializationSwitch" command line option (-z integer); by default (-z 0) the lattice will be set to a different random Q-tensor at every lattice site (with uniform s0)
+    */
     scalar S0 = (-b+sqrt(b*b-24*a*c))/(6*c);
-    if(verbose) printf("setting random configuration with S0 = %f\n",S0);
-    Configuration->setNematicQTensorRandomly(noise,S0);
+#include "setInitialConditions.h"
     sim->setCPUOperation(!GPU);
     if(verbose) printf("initialization done\n");
 
@@ -231,9 +280,50 @@ int main(int argc, char*argv[])
 
     profiler pMinimize("minimization");
     pMinimize.start();
-    //note that this single "performTimestep()" call performs some number of iterations of the FIRE algorithm, with that number set from the command line
-    sim->performTimestep();
+
+    if(linearSave < 0 && logSave < 0)   //minimize and save end result
+        {
+        //note that this single "performTimestep()" call performs some number of iterations of the FIRE algorithm, with that number set from the command line
+        sim->performTimestep();
+        }
+    else if (logSave<0)                 //save every linearSave steps
+        {
+        int currentIteration = 0;
+        string saveFileAppend="_t";
+        while(currentIteration +linearSave < maximumIterations && Fminimizer->getMaxForce() > forceCutoff)
+            {
+            //save the current state, then minimize more
+            string newSaveFile = saveFile+saveFileAppend+std::to_string(currentIteration);
+            if(saveFile != "NONE")
+                sim->saveState(newSaveFile,saveStride);
+            currentIteration += linearSave;
+            Fminimizer->setMaximumIterations(currentIteration);
+            sim->performTimestep();
+            if(verbose) printf("saving to %s (plus _xX_yY_zZ.txt)\n",newSaveFile.c_str());
+            };
+        }
+    else                                //save logarithmically
+        {
+        int currentIteration = 0;
+        string saveFileAppend="_t";
+        logSpacedIntegers lsi(0,logSave);
+
+        while(currentIteration < maximumIterations && Fminimizer->getMaxForce() > forceCutoff)
+            {
+            //save the current state, then minimize more
+            string newSaveFile = saveFile+saveFileAppend+std::to_string(currentIteration);
+            if(saveFile != "NONE")
+                sim->saveState(newSaveFile,saveStride);
+            lsi.update();
+            currentIteration =lsi.nextSave;
+            Fminimizer->setMaximumIterations(currentIteration);
+            sim->performTimestep();
+            if(verbose) printf("saving to %s (plus _xX_yY_zZ.txt)\n",newSaveFile.c_str());
+            };
+        }
+
     pMinimize.end();
+
 
     scalar E1 = sim->computePotentialEnergy(true);
     scalar maxForce;
@@ -253,13 +343,16 @@ int main(int argc, char*argv[])
     if(verbose) cout << "size of configuration " << Configuration->getClassSize() << endl;
     if(verbose) cout << "size of force computer" << landauLCForce->getClassSize() << endl;
     if(verbose) cout << "size of fire updater " << Fminimizer->getClassSize() << endl;
+
+
+    /*
+    //save average maximal eigenvector information -- occasionally used for debugging
     vector<scalar> averageN(3);
     Configuration->getAverageMaximalEigenvector(averageN);
-
     ofstream tempF("averageN.txt", ios::app);
     tempF <<averageN[0]<<", "<<averageN[1]<<", "<<averageN[2]<<"\n";
     tempF.close();
-
+    */
     MPI_Finalize();
     return 0;
     };

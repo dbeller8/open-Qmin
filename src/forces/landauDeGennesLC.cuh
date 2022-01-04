@@ -10,6 +10,11 @@
  * \brief CUDA kernels and callers for force calculations
  */
 
+bool gpuCorrectForceFromMetric(dVec *d_force,
+                                int N,
+                                int maxBlockSize);
+
+
 bool gpu_qTensor_oneConstantForce(dVec *d_force,
                                 dVec *d_spins,
                                 int *d_types,
@@ -51,6 +56,15 @@ bool gpu_qTensor_computeUniformFieldForcesGPU(dVec * d_force,
                                        int *d_types,
                                        int N,
                                        scalar3 field,
+                                       scalar anisotropicSusceptibility,
+                                       scalar vacuumPermeability,
+                                       bool zeroOutForce,
+                                       int maxBlockSize);
+
+bool gpu_qTensor_computeSpatiallyVaryingFieldForcesGPU(dVec * d_force,
+                                       int *d_types,
+                                       int N,
+                                       scalar3 *field,
                                        scalar anisotropicSusceptibility,
                                        scalar vacuumPermeability,
                                        bool zeroOutForce,

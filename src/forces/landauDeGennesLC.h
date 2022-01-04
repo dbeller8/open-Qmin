@@ -3,6 +3,7 @@
 
 #include "baseLatticeForce.h"
 #include "landauDeGennesLCBoundary.h"
+#include "multirankSimulation.h"
 /*! \file landauDeGennesLC.h */
 
 enum class distortionEnergyType {oneConstant,multiConstant};
@@ -17,6 +18,8 @@ class landauDeGennesLC : public baseLatticeForce
         landauDeGennesLC(scalar _A, scalar _B, scalar _C, scalar _L1,scalar _L2, scalar _L3, scalar _L4, scalar _L6);
         landauDeGennesLC(scalar _A, scalar _B, scalar _C, scalar _L1, scalar _L2,scalar _L3orWavenumber, distortionEnergyType _type);
 
+        virtual string reportSelfName(){string ans = "landauDeGennesLC"; return ans;};
+
         //!set up a few basic things (common force tuners, number of energy components, etc.)
         void baseInitialization();
         //!The model setting creates an additional data structure to help with 2- or 3- constant approximation
@@ -27,6 +30,9 @@ class landauDeGennesLC : public baseLatticeForce
 
         //select the force routing based on the number of elastic constants
         virtual void computeForceGPU(GPUArray<dVec> &forces,bool zeroOutForce = true);
+
+        //when using the Qxx,Qxy,Qxz,Qyy,Qyz basis, correct forces according to the non-orthogonal metric
+        virtual void correctForceFromMetric(GPUArray<dVec> &forces);
 
         void setPhaseConstants(scalar _a=-1, scalar _b =-12.325581395, scalar _c =  10.058139535){A=_a;B=_b;C=_c;};
         void setElasticConstants(scalar _l1=2.32,scalar _l2=0, scalar _l3=0, scalar _l4 = 0, scalar _l6=0){L1=_l1;L2=_l2;L3=_l3; L4=_l4; L6 = _l6;};
@@ -50,8 +56,12 @@ class landauDeGennesLC : public baseLatticeForce
                                     scalar3 field, scalar anisotropicSusceptibility,scalar vacuumPermeability);
 
         virtual void computeEorHFieldForcesGPU(GPUArray<dVec> &forces,bool zeroOutForce,
-                            scalar3 field, scalar anisotropicSusceptibility,scalar vacuumPermeability);
+                                    scalar3 field, scalar anisotropicSusceptibility,scalar vacuumPermeability);
 
+        virtual void computeSpatiallyVaryingFieldCPU(GPUArray<dVec> &forces,bool zeroOutForce,
+                                    GPUArray<scalar3> field, scalar anisotropicSusceptibility,scalar vacuumPermeability);
+        virtual void computeSpatiallyVaryingFieldGPU(GPUArray<dVec> &forces,bool zeroOutForce,
+                                    GPUArray<scalar3> field, scalar anisotropicSusceptibility,scalar vacuumPermeability);
         virtual void computeEnergyCPU(bool verbose = false);
         virtual void computeEnergyGPU(bool verbose = false);
 
@@ -89,6 +99,9 @@ class landauDeGennesLC : public baseLatticeForce
             mu0=_mu0;
             deltaChi=_deltaChi;
             };
+
+        void setSpatiallyVaryingField(string fname, scalar chi, scalar _mu0, scalar _deltaChi,int3 rankParity);
+
         //!the free energy density at each lattice site
         GPUArray<scalar> energyDensity;
         //!A helper array for energy reductions
@@ -124,11 +137,14 @@ class landauDeGennesLC : public baseLatticeForce
         scalar Chi;
         scalar mu0;
 
+        GPUArray<scalar3> spatiallyVaryingField;
+
         //!number of elastic constants
         distortionEnergyType numberOfConstants;
         //!switches for extra parts of the energy/force calculations
         bool computeEfieldContribution;
         bool computeHfieldContribution;
+        bool spatiallyVaryingFieldContribution;
 
         //!for 2- and 3- constant approximations, the force calculation is helped by first pre-computing first derivatives
         GPUArray<cubicLatticeDerivativeVector> forceCalculationAssist;

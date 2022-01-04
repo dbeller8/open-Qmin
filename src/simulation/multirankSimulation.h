@@ -119,8 +119,16 @@ class multirankSimulation : public basicSimulation, public enable_shared_from_th
         //!save a file for each rank recording the expanded lattice; lattice skip controls the sparsity of saved sites
         void saveState(string fname, int latticeSkip = 1, int defectType = 0);
 
+        //!load the Q-tensor values for each lattice site from a specified file. DOES NOT load any logic about the nature of various sites (boundary, etc)
+        void loadState(string fname);
+
         //!in multi-rank simulations, this stores the lowest (x,y,z) coordinate controlled by the current rank
         int3 latticeMinPosition;
+
+        virtual void reportSelf(){cout << "in the multirank simulation class" << endl;};
+
+        //! the local {x,y,z} rank coordinate...currently shuffled to basicSimulation.h
+        int3 rankParity;//even is even, odd is odd...makes sense
 
     protected:
         void setRankTopology(int x, int y, int z);
@@ -134,8 +142,6 @@ class multirankSimulation : public basicSimulation, public enable_shared_from_th
 
         //!the number of ranks per {x,y,z} axis
         int3 rankTopology;
-        //! the local {x,y,z} rank coordinate
-        int3 rankParity;//even is even, odd is odd...makes sense
         Index3D parityTest;
         //!do edges need to be communicated?
         bool edges;
